@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Aurory — CSP frame-ancestors / X-Frame-Options conflict PoC</title>
+<style>
+  body { font-family: ui-monospace, Menlo, monospace; background:#111; color:#eee; padding:24px; max-width:900px; margin:0 auto; }
+  h2, h3 { color:#fff; }
+  code { background:#222; padding:1px 5px; border-radius:3px; }
+  #status { font-size:1.05em; margin:14px 0; padding:12px 16px; border-radius:6px; background:#333; border-left:4px solid #888; }
+  #status.blocked { border-left-color:#e55; }
+  #status.loaded  { border-left-color:#5c5; }
+  .frame-wrap { position:relative; width:100%; max-width:800px; height:560px; border:2px solid #555; margin:16px 0; background:#000; }
+  iframe { width:100%; height:100%; border:0; }
+  .decoy {
+    position:absolute; top:36px; left:36px;
+    background:#ff0; color:#000; padding:14px 26px; font-weight:bold;
+    border-radius:8px; opacity:0.88; z-index:10;
+    pointer-events:none; /* decorative only: illustrates the overlay concept, not a live/functional attack */
+    box-shadow:0 2px 10px rgba(0,0,0,.5);
+  }
+  .decoy::after { content:" (illustrative overlay only — not clickable)"; font-weight:normal; font-size:.75em; display:block; }
+  pre { background:#000; padding:12px; overflow:auto; border:1px solid #333; border-radius:4px; }
+  .note { color:#aaa; font-size:.92em; }
+</style>
+</head>
+<body>
+
+<h2>Aurory — CSP <code>frame-ancestors</code> overrides <code>X-Frame-Options</code></h2>
+<p>Target: <code>https://app.aurory.io/</code> (identical CSP confirmed on <code>/profile/settings</code>,
+<code>/oauth-callback</code>, <code>/marketplace</code>, <code>/leaderboard</code> as well).</p>
+<p>This page is currently served from origin: <code id="origin">(loading…)</code></p>
+
+<div id="status">Checking frame load…</div>
+
+<div class="frame-wrap">
+  <iframe id="target" src="https://app.aurory.io/"></iframe>
+  <div class="decoy">CLAIM FREE REWARD</div>
+</div>
+
+<h3>How to read the result</h3>
+<ul>
+  <li><strong>Served from an origin matching <code>https://*.dev.aurory.io</code>:</strong> per Aurory's own
+    <code>Content-Security-Policy: frame-ancestors https://*.dev.aurory.io/</code> header, the browser permits the
+    frame and the real Aurory UI renders above — the yellow box illustrates where a real decoy button would sit over
+    genuine page content in an actual attack (e.g. over a wallet-approve or purchase-confirm button on a sensitive route).</li>
+  <li><strong>Served from any other origin</strong> (this exact file via <code>file://</code>, <code>localhost</code>,
+    or any domain that isn't on the <code>*.dev.aurory.io</code> wildcard): the frame is correctly <em>blocked</em>.
+    Open DevTools → Console to see the browser's own message, which will read approximately:
+    <pre>Refused to frame 'https://app.aurory.io/' because it violates the following Content Security Policy directive: "frame-ancestors https://*.dev.aurory.io/".</pre>
+  </li>
+</ul>
+<p class="note">
+  This file cannot by itself prove that a matching <code>*.dev.aurory.io</code> origin is reachable by an attacker —
+  that would require a separate precondition (e.g. a dangling-DNS subdomain takeover or an XSS on an existing dev
+  host) that has not been tested. What this file <em>does</em> prove, when opened from any origin, is that the policy
+  is real and behaves exactly as the response headers say: same-origin-only framing is <strong>not</strong> what's
+  actually enforced, despite the <code>X-Frame-Options: SAMEORIGIN</code> header also being present.
+</p>
+
+<h3>Raw evidence (response headers from <code>app.aurory.io</code>, captured independently of this page)</h3>
+<pre>X-Frame-Options: SAMEORIGIN
+Content-Security-Policy: default-src 'self';script-src 'unsafe-inline' 'report-sample' 'self' https://www.googletagmanager.com;style-src 'unsafe-inline' 'report-sample' 'self' https://fonts.googleapis.com;object-src 'none';base-uri 'self';connect-src 'self' https://*.aurory.io https://www.google-analytics.com https://aurory.rpcpool.com wss://aurory.rpcpool.com;font-src 'self' data: https://fonts.gstatic.com;frame-ancestors https://*.dev.aurory.io/;frame-src 'self' https://www.youtube.com;img-src 'self' data: https://*.aurory.io/ https://www.googletagmanager.com;manifest-src 'self';media-src 'self' https://images.cdn.aurory.io https://assets.cdn.aurory.io;worker-src 'none'
+
+Verified via: curl -sS -D - -o /dev/null 'https://app.aurory.io/'
+Confirmed identical on: /, /profile/settings, /oauth-callback, /marketplace, /leaderboard (2026-11-11)</pre>
+
+<script>
+document.getElementById('origin').textContent = location.origin || location.href;
+
+const el = document.getElementById('status');
+const frame = document.getElementById('target');
+let settled = false;
+
+// Note: a CSP frame-ancestors block still fires a 'load' event in most browsers (the navigation
+// completes; the content is simply replaced with an empty/blocked document). Cross-origin same-origin
+// policy correctly prevents this script from reading the frame's actual contents to tell the two cases
+// apart programmatically. Treat the message below as a prompt to look — the authoritative signals are
+// the DevTools console message and what you visually see rendered in the box above.
+frame.addEventListener('load', () => {
+  settled = true;
+  el.textContent = 'Frame finished loading — visually inspect the box above and check DevTools → Console ' +
+                    'to determine whether real Aurory content rendered (frame permitted) or it stayed blank ' +
+                    '(frame blocked by CSP).';
+});
+
+setTimeout(() => {
+  if (!settled) {
+    el.textContent = 'No load event after 5s — frame likely blocked. Expected unless this file is served ' +
+                      'from an origin matching https://*.dev.aurory.io.';
+    el.className = 'blocked';
+  }
+}, 5000);
+</script>
+</body>
+</html>
